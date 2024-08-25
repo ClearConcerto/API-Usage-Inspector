@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API 调用工具</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+        }
+        .container {
+            width: 100%;
+            max-width: 600px;
+            margin: auto;
+            padding: 20px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        input[type="text"], select, textarea {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            box-sizing: border-box;
+            height: 40px;
+        }
+        textarea {
+            height: 100px;
+        }
+        input[type="submit"] {
+            width: 30%;
+            padding: 10px;
+            border: none;
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+            margin-bottom: 10px;
+        }
+        input[type="submit"]:hover {
+            background-color: #0056b3;
+        }
+        .output {
+            white-space: pre-wrap;
+            background-color: #f9f9f9;
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+            margin-bottom: 20px;
+        }
+        h1 {
+            text-align: center;
+        }
+        #model-name-input {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>API 调用工具</h1>
+        <form id="api-form">
+            api链接
+            <textarea id="url" name="url" required></textarea>
+            api-key
+            <textarea id="api_key" name="api_key" required></textarea>
+            <label for="choice">选择一个选项:</label>
+            <select name="choice" id="choice" onchange="toggleModelInput()" required>
+                <option value="1">获取额度</option>
+                <option value="2">获取模型</option>
+                <option value="3">模型测试</option>
+            </select>
+            <div id="model-name-input">
+                <label for="model_name">输入模型名称 (默认: gpt-3.5-turbo):</label>
+                <input type="text" id="model_name" name="model_name" value="gpt-3.5-turbo">
+            </div>
+            <input type="submit" name="submit" value="提交">
+        </form>
+        <div class="output" id="output"></div>
+    </div>
+    <script>
+        function toggleModelInput() {
+            const choice = document.getElementById("choice").value;
+            const modelNameInput = document.getElementById("model-name-input");
+            if (choice === "3") {
+                modelNameInput.style.display = "block";
+            } else {
+                modelNameInput.style.display = "none";
+            }
+        }
+        async function handleSubmit(event) {
+            event.preventDefault();
+            const url = document.getElementById('url').value;
+            const api_key = document.getElementById('api_key').value;
+            const choice = document.getElementById('choice').value;
+            const model_name = document.getElementById('model_name').value;
+            let result;
+            switch (choice) {
+                case '1':
+                    result = await get_balance(url, api_key);
+                    break;
+                case '2':
+                    result = await get_models(url, api_key);
+                    break;
+                case '3':
+                    result = await test_model(url, api_key, model_name);
+                    break;
+                default:
+                    result = "无效的选择\n";
+                    break;
+            }
+            document.getElementById('output').innerText = result;
+        }
+        async function get_balance(url, api_key) {
+            const subscription_url = "/v1/dashboard/billing/subscription";
+            const headers = {
+                "Authorization": `Bearer ${api_key}`,
+                "Content-Type": "application/json"
+            };
+            // 获取总额
+            let response = await fetch(`${url}${subscription_url}`, {
+                method: 'GET',
+                headers: headers
+            });
+            if (response.ok) {
+                const data = await response.json();
+                const total = data["hard_limit_usd"];
+                // 获取已使用额度
+                const start_date = new Date(Date.now() - 99 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+                const end_date = new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+                const billing_url = `/v1/dashboard/billing/usage?start_date=${start_date}&end_date=${end_date}`;
+                response = await fetch(`${url}${billing_url}`, {
+                    method: 'GET',
+                    headers: headers
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    const total_usage = data["total_usage"] / 100;
+                    const remaining = total - total_usage;
+                    return `余额: ${total} 美元\n已用: ${total_usage} 美元\n`;
+                } else {
+                    return `获取使用信息时出错: ${await response.text()}\n`;
+                }
+            } else {
+                return `获取额度时出错: ${await response.text()}\n`;
+            }
+        }
+        async function get_models(url, api_key) {
+            const models_url = "/v1/models";
+            const headers = {
+                "Authorization": `Bearer ${api_key}`,
+                "Content-Type": "application/json"
+            };
+            const response = await fetch(`${url}${models_url}`, {
+                method: 'GET',
+                headers: headers
+            });
+            if (response.ok) {
+                const data = await response.json();
+                const models = data["data"];
+                let result = "";
+                for (const model of models) {
+                    result += `模型ID: ${model["id"]}，由 ${model["owned_by"]} 拥有\n`;
+                }
+                return result;
+            } else {
+                return `获取模型时出错: ${await response.text()}\n`;
+            }
+        }
+        async function test_model(url, api_key, model_name) {
+            const test_url = "/v1/chat/completions";
+            const headers = {
+                "Authorization": `Bearer ${api_key}`,
+                "Content-Type": "application/json"
+            };
+            const data = {
+                "model": model_name,
+                "messages": [
+                    {"role": "user", "content": "say this is a test!"}
+                ]
+            };
+            const response = await fetch(`${url}${test_url}`, {
+                method: 'POST',
+                headers: headers,
+                body: JSON.stringify(data)
+            });
+            if (response.ok) {
+                const response_data = await response.json();
+                const model_name = response_data['model'];
+                const content = response_data['choices'][0]['message']['content'];
+                return `测试的模型: ${model_name}\n响应内容: ${content}\n`;
+            } else {
+                return `模型测试失败: ${await response.text()}\n`;
+            }
+        }
+        document.getElementById('api-form').addEventListener('submit', handleSubmit);
+    </script>
+</body>
+</html>
